@@ -1,6 +1,6 @@
 # LAN-CHAT 
 
-##Lan Chat is a self-contained, admin-approved chat application that runs on a local network. It features a clean user interface and does not require an internet connection for the receiver, as it loads dependencies from a local `deps/` folder.
+ Lan Chat is a self-contained, admin-approved chat application that runs on a local network. It features a clean user interface and does not require an internet connection for the receiver, as it loads dependencies from a local `deps/` folder.
 
 ### Setup Instructions
 
@@ -23,8 +23,8 @@ python bundle_deps.py
 python main.py
 ```
 
-### But You better need to install python in your system to run this script. You can download it from the official Python website: [https://www.python.org/downloads/](https://www.python.org/downloads/)
+ But You better need to install python in your system to run this script. You can download it from the official Python website: [https://www.python.org/downloads/](https://www.python.org/downloads/)
 
 
 
-## And the Most crazy thing is that you can run the server without internet connection if you are connected to the same LAN network. The server will run on your local machine and you can access it from any device connected to the same network.
+ And the Most crazy thing is that you can run the server without internet connection if you are connected to the same LAN network. The server will run on your local machine and you can access it from any device connected to the same network.
