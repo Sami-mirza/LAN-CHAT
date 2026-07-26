@@ -7,7 +7,7 @@
 Clone the repository and run the following command to bundle dependencies (this step requires an internet connection):
 
 ```
-git clone git clone https://github.com/Sami-mirza/LAN-CHAT.git
+ git clone https://github.com/Sami-mirza/LAN-CHAT.git
 
 ```
 Go to the project directory and run the following command to bundle dependencies (this step requires an internet connection):
