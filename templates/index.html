@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LAN Chat</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/svg+xml"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M12 5.5c-3.9 0-7 2.47-7 5.7 0 1.76.9 3.36 2.37 4.42l-.5 2.38 2.62-1.32c.78.2 1.6.32 2.51.32 3.9 0 7-2.47 7-5.7S15.9 5.5 12 5.5z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- ══════════════════════ ONBOARDING (pre-join) ══════════════════════ -->
+  <main class="gate" id="gate">
+    <section class="card" id="view-join" hidden>
+      <div class="card-brand">
+        <span class="app-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 5.5c-3.9 0-7 2.47-7 5.7 0 1.76.9 3.36 2.37 4.42l-.5 2.38 2.62-1.32c.78.2 1.6.32 2.51.32 3.9 0 7-2.47 7-5.7S15.9 5.5 12 5.5z"/></svg>
+        </span>
+        <h1 class="card-title" id="joinRoomTitle">Join the room</h1>
+        <p class="card-sub">Pick a name so people know who you are. A moderator has to approve you before you can chat.</p>
+      </div>
+      <form id="joinForm" autocomplete="off">
+        <div class="field">
+          <label for="joinName">Display name</label>
+          <input id="joinName" name="name" type="text" maxlength="20"
+                 placeholder="e.g. Alex Morgan" required>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="joinBtn">
+          Request to join
+        </button>
+        <p class="form-error" id="joinError" role="alert" hidden></p>
+      </form>
+      <button class="link-btn" id="gotoSignin">Are you the moderator? <span>Sign in instead</span></button>
+    </section>
+
+    <section class="card" id="view-pending" hidden>
+      <div class="spinner" aria-label="Waiting for approval"></div>
+      <h1 class="card-title">Request sent</h1>
+      <p class="card-sub">Waiting for the moderator to approve your join request. This page will let you in automatically.</p>
+      <p class="muted">You can close this tab and come back any time under the same name.</p>
+      <div class="gate-alt">
+        <button class="link-btn" id="pendingWithdraw">Not waiting anymore? <span>Withdraw request</span></button>
+        <button class="link-btn" id="pendingGoSignin">Are you the moderator? <span>Sign in instead</span></button>
+      </div>
+    </section>
+
+    <section class="card" id="view-rejected" hidden>
+      <div class="card-icon danger"><svg viewBox="0 0 24 24"><path d="M12 2 2.7 18.5h18.6L12 2zm1 13h-2v2h2v-2zm0-7h-2v5h2V8z"/></svg></div>
+      <h1 class="card-title">Request declined</h1>
+      <p class="card-sub" id="rejectedText">That name wasn't approved. You can try again with a different name.</p>
+      <form id="retryForm" class="retry" autocomplete="off">
+        <div class="field">
+          <label for="retryName">New display name</label>
+          <input id="retryName" type="text" maxlength="20" placeholder="Choose another name" required>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="retryBtn">Try again</button>
+        <p class="form-error" id="retryError" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section class="card" id="view-signin" hidden>
+      <div class="card-brand">
+        <span class="app-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 11h14v9H5v-9zm3 0V7a4 4 0 0 1 8 0v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        <h1 class="card-title">Moderator sign-in</h1>
+        <p class="card-sub">Enter this server's moderator password to manage the room.</p>
+      </div>
+      <form id="signinForm" autocomplete="off">
+        <div class="field">
+          <label for="signinPassword">Password</label>
+          <input id="signinPassword" name="password" type="password" placeholder="••••••••" required>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="signinBtn">Sign in</button>
+        <p class="form-error" id="signinError" role="alert" hidden></p>
+      </form>
+      <button class="link-btn" id="gotoJoin"><span>Back to joining</span></button>
+    </section>
+  </main>
+
+  <!-- ══════════════════════ APPLICATION ══════════════════════ -->
+  <div class="app" id="app" hidden>
+    <aside class="rail" id="rail">
+      <header class="rail-head">
+        <span class="app-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 5.5c-3.9 0-7 2.47-7 5.7 0 1.76.9 3.36 2.37 4.42l-.5 2.38 2.62-1.32c.78.2 1.6.32 2.51.32 3.9 0 7-2.47 7-5.7S15.9 5.5 12 5.5z"/></svg>
+        </span>
+        <div class="rail-title">
+          <strong id="roomName"></strong>
+          <span class="room-tag">LAN ROOM</span>
+        </div>
+        <button class="icon-btn rail-close" id="railClose" title="Close members" aria-label="Close members">
+          ✕
+        </button>
+      </header>
+
+      <div class="rail-section">
+        <div class="rail-label">
+          <span id="membersLabel">Members</span>
+          <span class="count-pill" id="memberCount">0</span>
+        </div>
+        <ul class="member-list" id="memberList"></ul>
+      </div>
+
+      <footer class="rail-foot">
+        <div class="whoami">
+          <span class="avatar" id="myAvatar"></span>
+          <div class="whoami-text">
+            <strong id="myName"></strong>
+            <span class="role-chip" id="myRole" hidden>Moderator</span>
+          </div>
+        </div>
+        <div class="rail-actions">
+          <button class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">
+            <svg class="i-sun" viewBox="0 0 24 24"><path d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66-5.66 1.42-1.42M4.93 19.07l1.41-1.41m0-11.32L4.93 4.93M19.07 19.07l-1.41-1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <svg class="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="icon-btn" id="signOutBtn" title="Sign out" aria-label="Sign out">
+            <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </footer>
+    </aside>
+
+    <section class="stage">
+      <header class="stage-head">
+        <div class="stage-id">
+          <button class="icon-btn rail-toggle" id="railToggle" title="Members" aria-label="Open members" aria-expanded="false" aria-controls="rail">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <div class="presence-dot" id="connDot"></div>
+          <div>
+            <h1 class="stage-room" id="stageRoom"></h1>
+            <p class="stage-status" id="stageStatus">Connecting…</p>
+          </div>
+        </div>
+        <div class="stage-actions">
+          <button class="btn btn-ghost btn-requests" id="requestsBtn" hidden>
+            <svg viewBox="0 0 24 24"><path d="M8 2v4m8-4v4M3 10h18M5 8h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Requests</span>
+            <span class="count-pill" id="pendingBadge" hidden>0</span>
+          </button>
+          <button class="btn btn-ghost-danger" id="clearBtn" hidden>
+            <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Clear room</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="scroller" id="scroller">
+        <div class="messages" id="messages"></div>
+        <div class="jump hidden" id="jumpWrap">
+          <button id="jumpBtn" type="button">New messages ↓</button>
+        </div>
+      </div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="composer-box">
+          <textarea id="message" rows="1" maxlength="1000"
+                    placeholder="Message the room…" aria-label="Message"></textarea>
+          <div class="composer-meta">
+            <span class="counter" id="counter">0 / 1000</span>
+            <button class="btn btn-primary btn-send" id="sendBtn" type="submit" disabled aria-label="Send">
+              <svg viewBox="0 0 24 24"><path d="M22 2 11 13m11-11-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <!-- ══════════════════════ PENDING-REQUESTS PANEL (moderator) ══════════════════════ -->
+  <div class="sheet" id="requestsSheet" hidden>
+    <header class="sheet-head">
+      <h2 class="sheet-title">Pending requests</h2>
+      <button class="icon-btn" id="closeRequests" aria-label="Close">✕</button>
+    </header>
+    <ul class="request-list" id="requestList"></ul>
+    <div class="sheet-empty" id="requestsEmpty" hidden>No pending requests.</div>
+  </div>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="rail-scrim" id="railScrim"></div>
+
+  <!-- ══════════════════════ CONFIRM DIALOG ══════════════════════ -->
+  <div class="dialog-wrap" id="confirmDlg" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="dialog-icon danger" id="confirmIcon"><svg viewBox="0 0 24 24"><path d="M12 2 2.7 18.5h18.6L12 2zm1 13h-2v2h2v-2zm0-7h-2v5h2V8z"/></svg></div>
+      <h3 id="confirmTitle">Are you sure?</h3>
+      <p class="dialog-text" id="confirmText"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="confirmCancel">Cancel</button>
+        <button class="btn btn-danger" id="confirmOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

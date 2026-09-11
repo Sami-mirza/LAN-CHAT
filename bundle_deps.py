@@ -1,63 +1,47 @@
 #!/usr/bin/env python3
-"""
-Bundle Flask into your project folder for offline sharing.
-Run this ONCE with internet, then share the entire folder.
+"""Bundle Flask into ./deps for fully-offline use of LAN Chat.
+
+Run this once *with* internet, then distribute the whole folder (USB stick,
+Bluetooth, LAN share). Everyone on the network can then run `python main.py`
+with zero internet connection.
+
+    $ python bundle_deps.py
 """
 
-import subprocess
-import sys
 import os
 import shutil
+import subprocess
+import sys
 
-def main():
-    deps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deps')
+FLASK_VERSION = "3.1.3"
 
-    print("=" * 55)
-    print("     📦  OFFLINE BUNDLER FOR LAN CHAT  📦")
-    print("=" * 55)
-    print()
 
-    # Clean old deps
+def main() -> None:
+    here = os.path.dirname(os.path.abspath(__file__))
+    deps_dir = os.path.join(here, "deps")
+
+    print("=" * 56)
+    print("  🧳  LAN CHAT — OFFLINE DEPENDENCY BUNDLER")
+    print("=" * 56)
+
     if os.path.exists(deps_dir):
-        print("🧹 Cleaning old deps folder...")
+        print(f"  🧹  Clearing existing {deps_dir}")
         shutil.rmtree(deps_dir)
-
     os.makedirs(deps_dir, exist_ok=True)
 
-    print("⬇️  Downloading Flask and dependencies...")
-    print("   (This requires internet - do it ONCE)")
-    print()
-
+    print(f"  ⬇️   Downloading Flask {FLASK_VERSION} + dependencies (requires internet)…")
     try:
         subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install',
-            'flask', '-t', deps_dir, '--no-cache-dir'
+            sys.executable, "-m", "pip", "install",
+            f"flask=={FLASK_VERSION}", "--target", deps_dir, "--no-cache-dir",
         ])
-        print()
-        print("=" * 55)
-        print("  ✅ DONE! Flask is now bundled in ./deps/")
-        print("=" * 55)
-        print()
-        print("  📁 Your folder now looks like:")
-        print("     chat_folder/")
-        print("     ├── lan_chat_offline.py")
-        print("     ├── bundle_deps.py")
-        print("     ├── README.txt")
-        print("     └── deps/          ← Flask lives here")
-        print("         ├── flask/")
-        print("         ├── werkzeug/")
-        print("         └── ...")
-        print()
-        print("  🔌 Share this ENTIRE folder via USB cable,")
-        print("     Bluetooth, or local network transfer.")
-        print("  👥 Receiver just runs: python lan_chat_offline.py")
-        print("     (No internet needed!)")
-        print()
+    except subprocess.CalledProcessError as exc:
+        sys.exit(f"  ❌  Bundling failed: {exc}\n     Make sure pip is installed and online.")
 
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Error: {e}")
-        print("Make sure you have internet and pip is installed.")
-        sys.exit(1)
+    print("  ✅  Done. Flask is vendored in ./deps/")
+    print("  👉  Anyone can now run:  python main.py   (no internet needed)")
+    print("=" * 56)
+
 
 if __name__ == "__main__":
     main()

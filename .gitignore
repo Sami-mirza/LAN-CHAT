@@ -1,1 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Docs produced by the original single-file run (kept for reference)
 SERVER_PYTHON_GUIDE.md
