@@ -14,6 +14,40 @@ const ICONS = {
   chat: '<svg viewBox="0 0 24 24"><path d="M12 5.5c-3.9 0-7 2.47-7 5.7 0 1.76.9 3.36 2.37 4.42l-.5 2.38 2.62-1.32c.78.2 1.6.32 2.51.32 3.9 0 7-2.47 7-5.7S15.9 5.5 12 5.5z" fill="currentColor"/></svg>',
 };
 
+/* ─── notification bell (Web Audio API — fully offline) ─────────────── */
+function playBellChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    // First tone: A5 (880 Hz), 250ms fade
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(880, now);
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc1.connect(gain1).connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.25);
+    // Second tone: D6 (1174.66 Hz), offset 120ms
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(1174.66, now + 0.12);
+    gain2.gain.setValueAtTime(0.001, now);
+    gain2.gain.setValueAtTime(0.25, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc2.connect(gain2).connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.45);
+  } catch (_) { /* Web Audio not supported — silent fallback */ }
+}
+
+function pulseRequestsBtn() {
+  els.requestsBtn.classList.add("pulse");
+  setTimeout(() => els.requestsBtn.classList.remove("pulse"), 600);
+}
+
 /* ─── theme ─────────────────────────────────────────────────────────── */
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
@@ -38,6 +72,11 @@ const state = {
   maybeMore: false,
   connected: false,
 };
+
+// previous pending count seen on the SSE stream — used to detect a *new*
+// join request and trigger the notification bell (never chimes on the
+// initial value loaded via bootstrap/messages, only on an increase).
+let lastKnownPending = 0;
 
 const els = {
   gate: $("#gate"),
@@ -65,6 +104,10 @@ const els = {
   jumpWrap: $("#jumpWrap"), jumpBtn: $("#jumpBtn"),
   composer: $("#composer"), message: $("#message"), sendBtn: $("#sendBtn"),
   counter: $("#counter"),
+  atBtn: $("#atBtn"),
+  mentionDropdown: $("#mentionDropdown"), mentionList: $("#mentionList"),
+  micBtn: $("#micBtn"),
+  recordingIndicator: $("#recordingIndicator"), recTime: $("#recTime"),
   requestsBtn: $("#requestsBtn"), pendingBadge: $("#pendingBadge"),
   requestsSheet: $("#requestsSheet"), requestList: $("#requestList"),
   requestsEmpty: $("#requestsEmpty"), scrim: $("#scrim"),
@@ -176,7 +219,7 @@ function pollWhilePending() {
 }
 
 /* ─── join / retry / sign-in ────────────────────────────────────────── */
-async function submitJoin(form, nameInput, btn, errEl) {
+async function submitJoin(form, nameInput, btn, errEl, doneText) {
   const name = nameInput.value.trim();
   if (name.length < 2) {
     errEl.textContent = "Use at least 2 characters.";
@@ -187,7 +230,7 @@ async function submitJoin(form, nameInput, btn, errEl) {
   btn.textContent = "Sending…";
   const { ok, data } = await api("POST", "/api/request_join", { name });
   btn.disabled = false;
-  btn.textContent = "Request to join";
+  btn.textContent = doneText;
   if (ok) {
     errEl.hidden = true;
     state.name = name;
@@ -202,12 +245,12 @@ async function submitJoin(form, nameInput, btn, errEl) {
 
 els.joinForm.addEventListener("submit", (e) => {
   e.preventDefault();
-  submitJoin(els.joinForm, els.joinName, els.joinBtn, els.joinError);
+  submitJoin(els.joinForm, els.joinName, els.joinBtn, els.joinError, "Request to join");
 });
 
 els.retryForm.addEventListener("submit", (e) => {
   e.preventDefault();
-  submitJoin(els.retryForm, els.retryName, els.retryBtn, els.retryError);
+  submitJoin(els.retryForm, els.retryName, els.retryBtn, els.retryError, "Try again");
 });
 
 els.gotoSignin.addEventListener("click", () => {
@@ -275,6 +318,8 @@ function enterApp(b) {
   els.signOutBtn.hidden = false;
   els.requestsBtn.hidden = !state.isAdmin;
   els.clearBtn.hidden = !state.isAdmin;
+  if (b.pending_count != null) state.pendingCount = b.pending_count;
+  updatePendingBadge();
   els.message.placeholder = `Message ${state.room}…`;
   setConnected(false);
   // Open SSE first (buffering) so messages that arrive during the history
@@ -283,6 +328,11 @@ function enterApp(b) {
   streamBuffer = [];
   openStream();
   loadInitialMessages();
+  // Seed the @mention list immediately (SSE presence will keep it fresh).
+  fetch("/api/users")
+    .then((r) => r.ok ? r.json() : { users: [] })
+    .then((d) => { if (Array.isArray(d.users)) mentionUsers = d.users; })
+    .catch(() => {});
 }
 
 /* ─── messages: loading & rendering ───────────────────────────────────
@@ -442,10 +492,49 @@ function makeChatNode(m) {
   head.append(author, time);
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
-  bubble.textContent = m.text;               // textContent = safe
+  if (m.kind === "voice") {
+    bubble.appendChild(makeVoicePlayer(m));
+  } else {
+    renderRichText(m.text, bubble);
+  }
   body.append(head, bubble);
   wrap.append(av, body);
+  // Highlight messages that mention the current user.
+  if (m.kind === "chat" && m.user !== state.name && state.name) {
+    // Match @name at a word boundary — names may contain letters, digits, hyphens
+    // or underscores.  The trailing (?=\s|[.,!?;:]|$) ensures we match a full
+    // mention and not a prefix of a longer @name.
+    const pattern = new RegExp(
+      "@" + escapeRegex(state.name) + "(?=\\s|[.,!?;:]|$)", "i"
+    );
+    if (pattern.test(m.text)) wrap.classList.add("msg-mentioned");
+  }
   return wrap;
+}
+
+/* Render a chat message with @mentions highlighted. XSS-safe: plain text
+   goes through createTextNode, mention segments through span.textContent —
+   never innerHTML. */
+function renderRichText(text, container) {
+  // Match @mention: @ followed by a word char, then 0-19 word chars / hyphens /
+  // underscores. Spaces and dots are NOT included — they terminate the mention
+  // so surrounding text stays in its default style.
+  const parts = text.split(/(@[\w][\w_-]{0,19})/g);
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.charAt(0) === "@") {
+      const span = document.createElement("span");
+      span.className = "mention";
+      span.textContent = part;                 // textContent = safe
+      container.appendChild(span);
+    } else {
+      container.appendChild(document.createTextNode(part));
+    }
+  }
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function makeSystemNode(m) {
@@ -456,6 +545,68 @@ function makeSystemNode(m) {
   txt.textContent = m.text;                  // textContent = safe
   sys.appendChild(txt);
   return sys;
+}
+
+/* WhatsApp-style voice message player */
+function makeVoicePlayer(m) {
+  const wrap = document.createElement("div");
+  wrap.className = "voice-msg";
+
+  const playBtn = document.createElement("button");
+  playBtn.className = "voice-play";
+  playBtn.type = "button";
+  playBtn.setAttribute("aria-label", "Play voice message");
+  playBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+
+  const track = document.createElement("div");
+  track.className = "voice-track";
+  const progress = document.createElement("div");
+  progress.className = "voice-progress";
+  track.appendChild(progress);
+
+  const dur = document.createElement("span");
+  dur.className = "voice-duration";
+  const msec = m.text.match(/([\d.]+)s voice message/);
+  dur.textContent = msec ? formatDuration(parseFloat(msec[1])) : "0:00";
+
+  wrap.append(playBtn, track, dur);
+
+  const pauseSVG = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>';
+  let audio = null;
+  let playing = false;
+
+  playBtn.addEventListener("click", () => {
+    if (playing && audio) {
+      audio.pause();
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+      playing = false;
+      return;
+    }
+    if (!audio) {
+      audio = new Audio(`/api/voice/${m.id}`);
+      audio.addEventListener("timeupdate", () => {
+        if (!Number.isNaN(audio.duration)) {
+          progress.style.width = ((audio.currentTime / audio.duration) * 100) + "%";
+        }
+      });
+      audio.addEventListener("ended", () => {
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+        progress.style.width = "0%";
+        playing = false;
+      });
+    }
+    audio.play().catch(() => toast("Couldn't play voice message.", "err"));
+    playBtn.innerHTML = pauseSVG;
+    playing = true;
+  });
+
+  return wrap;
+}
+
+function formatDuration(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function dividerFor(isoOrNull, prevDay) {
@@ -584,8 +735,16 @@ function openStream() {
   });
   evtSource.addEventListener("presence", (e) => {
     const p = JSON.parse(e.data);
+    mentionUsers = p.online.map((u) => u.name);   // feed the @mention dropdown
     renderPresence(p.online, p.pending);
     if (p.pending != null && state.isAdmin) {
+      // A *new* join request arrived → notify (chime + button pulse).
+      // Guarded so a reconnect/reload never chimes on the pre-existing count.
+      if (p.pending > lastKnownPending && lastKnownPending > 0) {
+        playBellChime();
+        pulseRequestsBtn();
+      }
+      lastKnownPending = p.pending;
       state.pendingCount = p.pending;
       updatePendingBadge();
     }
@@ -643,8 +802,14 @@ function autosize() {
   const canSend = els.message.value.trim().length > 0;
   els.sendBtn.disabled = !canSend;
 }
-els.message.addEventListener("input", autosize);
+els.message.addEventListener("input", () => {
+  autosize();
+  checkMentionTrigger();
+});
 els.message.addEventListener("keydown", (e) => {
+  // ignore Enter while an IME is composing (mobile East-Asian keyboards)
+  if (e.isComposing || e.keyCode === 229) return;
+  handleMentionKeys(e);
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); els.composer.requestSubmit(); }
 });
 els.composer.addEventListener("submit", async (e) => {
@@ -660,13 +825,224 @@ els.composer.addEventListener("submit", async (e) => {
   }
 });
 
+/* ─── @mention autocomplete ─────────────────────────────────────────── */
+let mentionUsers = [];       // online user names (fed by SSE presence)
+let mentionActive = false;   // dropdown visible
+let mentionQuery = "";
+
+function positionMentionDropdown() {
+  const rect = els.composer.getBoundingClientRect();
+  els.mentionDropdown.style.bottom = (window.innerHeight - rect.top + 6) + "px";
+  els.mentionDropdown.style.left = rect.left + "px";
+}
+
+function showMentionDropdown(query) {
+  const q = query.toLowerCase();
+  const matches = mentionUsers.filter(
+    (u) => u.toLowerCase().includes(q) && u !== state.name
+  );
+  if (matches.length === 0) {
+    hideMentionDropdown();
+    return;
+  }
+  els.mentionList.innerHTML = "";
+  for (const name of matches) {
+    const li = document.createElement("li");
+    li.className = "mention-option";
+    li.dataset.name = name;            // safe: server-supplied name, kept in dataset
+    const av = document.createElement("span");
+    av.className = "avatar avatar-sm";
+    av.textContent = initial(name);
+    av.style.background = avatarColor(name);
+    const nm = document.createElement("span");
+    nm.className = "mention-name";
+    nm.textContent = name;             // textContent = safe
+    li.append(av, nm);
+    li.addEventListener("click", () => insertMention(name));
+    els.mentionList.appendChild(li);
+  }
+  positionMentionDropdown();
+  els.mentionDropdown.hidden = false;
+  mentionActive = true;
+  mentionQuery = query;
+}
+
+function hideMentionDropdown() {
+  els.mentionDropdown.hidden = true;
+  mentionActive = false;
+  mentionQuery = "";
+}
+
+function checkMentionTrigger() {
+  const ta = els.message;
+  const before = ta.value.substring(0, ta.selectionStart);
+  const m = before.match(/@(\w[\w_-]{0,19})$/);
+  if (m) showMentionDropdown(m[1]);
+  else hideMentionDropdown();
+}
+
+function insertMention(name) {
+  const ta = els.message;
+  const cursor = ta.selectionStart;
+  const before = ta.value.substring(0, cursor);
+  // Replace the "@query" the user typed (matched by checkMentionTrigger) if present.
+  const atMatch = before.match(/@(\w[\w ._-]{0,19})$/);
+  const insertion = "@" + name + " ";
+  let newVal, newPos;
+  if (atMatch) {
+    newVal = before.substring(0, atMatch.index) + insertion + ta.value.substring(cursor);
+    newPos = atMatch.index + insertion.length;
+  } else {
+    // Fallback (e.g. button clicked with no typed @): insert at cursor.
+    newVal = before + insertion + ta.value.substring(cursor);
+    newPos = cursor + insertion.length;
+  }
+  ta.value = newVal;
+  ta.selectionStart = ta.selectionEnd = newPos;
+  hideMentionDropdown();
+  ta.focus();
+  autosize();
+}
+
+function navigateMentionList(dir) {
+  const items = els.mentionList.querySelectorAll(".mention-option");
+  if (items.length === 0) return;
+  let idx = -1;
+  items.forEach((el, i) => { if (el.classList.contains("active")) idx = i; });
+  items.forEach((el) => el.classList.remove("active"));
+  idx = (idx + dir + items.length) % items.length;
+  items[idx].classList.add("active");
+  items[idx].scrollIntoView({ block: "nearest" });
+}
+
+function handleMentionKeys(e) {
+  if (!mentionActive) return;
+  if (e.key === "Escape") { hideMentionDropdown(); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    navigateMentionList(e.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (e.key === "Tab" || e.key === "Enter") {
+    const sel = els.mentionList.querySelector(".mention-option.active")
+      || els.mentionList.querySelector(".mention-option");
+    if (sel) {
+      e.preventDefault();
+      insertMention(sel.dataset.name);
+    }
+  }
+}
+
+els.atBtn.addEventListener("click", () => {
+  const ta = els.message;
+  const cursor = ta.selectionStart;
+  ta.value = ta.value.substring(0, cursor) + "@" + ta.value.substring(cursor);
+  ta.selectionStart = ta.selectionEnd = cursor + 1;
+  ta.focus();
+  checkMentionTrigger();
+});
+
+// Close the dropdown when clicking anywhere else.
+document.addEventListener("click", (e) => {
+  if (!els.mentionDropdown.contains(e.target) && e.target !== els.atBtn) {
+    hideMentionDropdown();
+  }
+});
+
+/* ─── voice recording ────────────────────────────────────────────────── */
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingStart = 0;
+let recordingTimer = null;
+
+async function toggleRecording() {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    stopRecording();
+    return;
+  }
+  if (els.message.value.trim()) {
+    // Don't silently drop a typed draft mid-switch; kick a toast instead.
+    toast("Send or clear your message first.", "info");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus" : "audio/webm";
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      sendVoiceMessage();
+    };
+    mediaRecorder.start();
+    recordingStart = Date.now();
+    els.micBtn.classList.add("recording");
+    els.recordingIndicator.hidden = false;
+    els.message.disabled = true;
+    els.message.placeholder = "Recording… tap the mic to send";
+    els.atBtn.disabled = true;
+    els.sendBtn.disabled = true;
+    recordingTimer = setInterval(updateRecTime, 200);
+  } catch (err) {
+    toast("Microphone access denied or unavailable.", "err");
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+  clearInterval(recordingTimer);
+  els.micBtn.classList.remove("recording");
+  els.recordingIndicator.hidden = true;
+  els.message.disabled = false;
+  els.message.placeholder = `Message ${state.room}…`;
+  els.atBtn.disabled = false;
+}
+
+function updateRecTime() {
+  const secs = Math.floor((Date.now() - recordingStart) / 1000);
+  const m = Math.floor(secs / 60);
+  const s = String(secs % 60).padStart(2, "0");
+  els.recTime.textContent = `${m}:${s}`;
+  if (secs >= 600) stopRecording();  // hard cap, mirrors server's 600s clamp
+}
+
+async function sendVoiceMessage() {
+  if (audioChunks.length === 0) return;
+  const blob = new Blob(audioChunks, { type: "audio/webm" });
+  const duration = ((Date.now() - recordingStart) / 1000).toFixed(1);
+  const form = new FormData();
+  form.append("audio", blob, "voice.webm");
+  form.append("duration", duration);
+  try {
+    const res = await fetch("/api/send-voice", {
+      method: "POST",
+      headers: { "X-CSRF": state.csrf || "" },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) toast(data.error || "Couldn't send voice message.", "err");
+  } catch (_) {
+    toast("Couldn't send voice message.", "err");
+  }
+}
+
+els.micBtn.addEventListener("click", toggleRecording);
+
 /* ─── moderator actions ─────────────────────────────────────────────── */
+let confirmBusy = false;
 function confirmDialog(title, text) {
+  // Guard against re-entrancy: only one confirm dialog at a time (e.g. rapid
+  // kick clicks) — a second request must not stack listeners on the buttons.
+  if (confirmBusy) return Promise.resolve(false);
   return new Promise((resolve) => {
+    confirmBusy = true;
     els.confirmTitle.textContent = title;
     els.confirmText.textContent = text;
     els.confirmDlg.hidden = false;
     const done = (val) => {
+      confirmBusy = false;
       els.confirmDlg.hidden = true;
       els.confirmOk.removeEventListener("click", ok);
       els.confirmCancel.removeEventListener("click", cancel);

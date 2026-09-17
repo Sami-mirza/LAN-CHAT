@@ -159,6 +159,16 @@
           <textarea id="message" rows="1" maxlength="1000"
                     placeholder="Message the room…" aria-label="Message"></textarea>
           <div class="composer-meta">
+            <div class="recording-indicator" id="recordingIndicator" hidden>
+              <span class="rec-dot"></span>
+              <span class="rec-time" id="recTime">0:00</span>
+            </div>
+            <button class="icon-btn mic-btn" id="micBtn" type="button"
+                    title="Record a voice message" aria-label="Record a voice message">
+              <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            </button>
+            <button class="icon-btn at-btn" id="atBtn" type="button"
+                    title="Mention someone" aria-label="Mention someone">@</button>
             <span class="counter" id="counter">0 / 1000</span>
             <button class="btn btn-primary btn-send" id="sendBtn" type="submit" disabled aria-label="Send">
               <svg viewBox="0 0 24 24"><path d="M22 2 11 13m11-11-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -166,6 +176,11 @@
           </div>
         </div>
       </form>
+
+      <!-- @mention autocomplete dropdown -->
+      <div class="mention-dropdown hidden" id="mentionDropdown">
+        <ul class="mention-list" id="mentionList"></ul>
+      </div>
     </section>
   </div>
 

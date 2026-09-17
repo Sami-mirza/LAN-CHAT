@@ -6,6 +6,7 @@ test client, so nothing touches the developer's real data.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 
@@ -310,6 +311,39 @@ def test_logout_requires_csrf(client):
     assert client.get("/api/bootstrap").get_json()["status"] == "new"
 
 
+def test_ban_is_ephemeral_across_restart(tmp_path):
+    """Kicking blocks a name only for the current server run; after a restart
+    the same name can join again (bans are in-memory, never persisted)."""
+    db_path = str(tmp_path / "chat.db")
+    cfg = Config(db_path=db_path, admin_password="pw", rate_limit_seconds=0)
+    cfg.db = DB(cfg.db_path)
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    cl = app.test_client()
+    boot(cl, admin=True, password="pw")
+
+    visitor = app.test_client()
+    user_joins(visitor, "Sam")
+    assert cl.post("/api/approve", json={"name": "Sam"},
+                   headers={"X-CSRF": csrf(cl)}).status_code == 200
+    assert cl.post("/api/kick", json={"name": "Sam"},
+                   headers={"X-CSRF": csrf(cl)}).status_code == 200
+    # within this run the name stays blocked
+    assert visitor.post("/api/request_join", json={"name": "Sam"},
+                        headers={"X-CSRF": csrf(visitor)}).status_code == 403
+
+    # server "restart": same database file, fresh app instance
+    cfg2 = Config(db_path=db_path, admin_password="pw", rate_limit_seconds=0)
+    cfg2.db = DB(cfg2.db_path)
+    app2 = create_app(cfg2)
+    app2.config["TESTING"] = True
+    cl2 = app2.test_client()
+    boot(cl2, admin=True, password="pw")
+    fresher = app2.test_client()
+    assert fresher.post("/api/request_join", json={"name": "Sam"},
+                        headers={"X-CSRF": csrf(fresher)}).status_code == 200
+
+
 def test_initial_history_returns_newest_page(client):
     """after=0 must load the latest messages, not the oldest ones."""
     boot(client, admin=True)
@@ -325,3 +359,92 @@ def test_initial_history_returns_newest_page(client):
     ).get_json()
     older_chats = [m["text"] for m in older["messages"] if m["kind"] == "chat"]
     assert "m6" in older_chats or "m0" in older_chats
+
+
+# ── @mention support ───────────────────────────────────────────────────────
+def test_users_endpoint_lists_online_users(client):
+    mod = make_mod(client)
+    user_joins(client, "Alice")
+    assert mod.post("/api/approve", json={"name": "Alice"},
+                    headers={"X-CSRF": csrf(mod)}).status_code == 200
+    user_joins(client, "Bob")
+
+    data = client.get("/api/users").get_json()
+    assert "Alice" in data["users"]
+    assert "Moderator" in data["users"]      # the online mod is listed too
+    assert "Bob" not in data["users"]        # still pending → not listed
+
+
+def test_users_endpoint_requires_room_member(client):
+    # a visitor who never joined has no session user → 403
+    r = client.get("/api/users")
+    assert r.status_code == 403
+
+
+def test_mention_text_round_trips(client):
+    user_joins(client, "Alice")
+    boot(client, admin=True)
+    r = client.post("/api/send", json={"text": "Hey @Alice, check this!"},
+                    headers={"X-CSRF": csrf(client)})
+    assert r.status_code == 200
+    msgs = client.get("/api/messages").get_json()["messages"]
+    assert any(m["text"] == "Hey @Alice, check this!" for m in msgs)
+
+
+# ── voice messages ─────────────────────────────────────────────────────────
+def test_send_and_retrieve_voice(client):
+    user_joins(client, "Alice")
+    mod = make_mod(client)
+    assert mod.post("/api/approve", json={"name": "Alice"},
+                    headers={"X-CSRF": csrf(mod)}).status_code == 200
+
+    audio = b"\x1a\x45\xdf\xa3" + b"x" * 500  # fake webm blob, >100 bytes
+    r = client.post("/api/send-voice",
+                    data={"audio": (io.BytesIO(audio), "voice.webm"),
+                          "duration": "3.2"},
+                    content_type="multipart/form-data",
+                    headers={"X-CSRF": csrf(client)})
+    assert r.status_code == 200, r.get_json()
+
+    msgs = client.get("/api/messages").get_json()["messages"]
+    voice_rows = [m for m in msgs if m["kind"] == "voice"]
+    assert len(voice_rows) == 1
+    assert voice_rows[0]["has_audio"] is True
+
+    mid = voice_rows[0]["id"]
+    got = client.get(f"/api/voice/{mid}")
+    assert got.status_code == 200
+    assert got.data == audio
+
+
+def test_voice_fetch_rejects_non_voice_message(client):
+    user_joins(client, "Alice")
+    boot(client, admin=True)
+    client.post("/api/approve", json={"name": "Alice"}, headers={"X-CSRF": csrf(client)})
+    client.post("/api/send", json={"text": "plain text"},
+                headers={"X-CSRF": csrf(client)})
+    text_row = client.get("/api/messages").get_json()["messages"][-1]
+    assert client.get(f"/api/voice/{text_row['id']}").status_code == 404
+
+
+def test_voice_requires_audio(client):
+    user_joins(client, "Alice")
+    boot(client, admin=True)
+    client.post("/api/approve", json={"name": "Alice"}, headers={"X-CSRF": csrf(client)})
+    r = client.post("/api/send-voice",
+                    data={"duration": "3.2"},
+                    content_type="multipart/form-data",
+                    headers={"X-CSRF": csrf(client)})
+    assert r.status_code == 400
+
+
+def test_voice_too_short_rejected(client):
+    user_joins(client, "Alice")
+    boot(client, admin=True)
+    client.post("/api/approve", json={"name": "Alice"}, headers={"X-CSRF": csrf(client)})
+    r = client.post("/api/send-voice",
+                    data={"audio": (io.BytesIO(b"\x00"), "voice.webm"),
+                          "duration": "0.1"},
+                    content_type="multipart/form-data",
+                    headers={"X-CSRF": csrf(client)})
+    assert r.status_code == 400

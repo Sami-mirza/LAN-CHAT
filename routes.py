@@ -44,6 +44,15 @@ _cleared_epoch = 0
 _rate_lock = threading.Lock()
 _last_send: dict[str, float] = {}
 
+# Names banned by a moderator kick. Ephemeral on purpose: held in memory only,
+# so a kicked name is blocked for the current server run but joinable again
+# after a restart. (Deliberately not persisted in the SQLite DB.)
+_banned_names: set[str] = set()
+
+
+def _banned(name: str) -> bool:
+    return name.lower().strip() in _banned_names
+
 
 # ─── helpers ───────────────────────────────────────────────────────────────
 def now_iso() -> str:
@@ -121,6 +130,9 @@ def _serialize_message(row: dict) -> dict:
         "kind": row["kind"],
         "time": row["time"],
         "created_at": row["created_at"],
+        # audio_data is deliberately not selected in list queries; the single
+        # source of truth for "has audio" is the server-enforced kind.
+        "has_audio": row["kind"] == "voice",
     }
 
 
@@ -136,9 +148,11 @@ def _is_json_object() -> Optional[dict]:
 
 # ─── routes ────────────────────────────────────────────────────────────────
 def init_routes(app: Flask, cfg: Config) -> None:
-    global _app, _cfg, _db, _admin_password_hash
+    global _app, _cfg, _db, _admin_password_hash, _banned_names
     _app, _cfg, _db = app, cfg, cfg.db
     _admin_password_hash = sha256_hex(cfg.admin_password)
+    # Bans are ephemeral: clear the in-memory set on every server start.
+    _banned_names = set()
     app.secret_key = secrets.token_hex(32)
     app.config["RATE_LIMIT_SECONDS"] = cfg.rate_limit_seconds
 
@@ -183,7 +197,7 @@ def init_routes(app: Flask, cfg: Config) -> None:
             if req["status"] == "pending":
                 return jsonify({"status": "pending", "csrf": _db.csrf_for(sid),
                                 "room": _cfg.room_name})
-            return jsonify({"status": "rejected", "banned": _db.is_banned(req["name"]),
+            return jsonify({"status": "rejected", "banned": _banned(req["name"]),
                             "csrf": _db.csrf_for(sid), "room": _cfg.room_name})
         return jsonify({"status": "new", "csrf": _db.csrf_for(sid), "room": _cfg.room_name})
 
@@ -199,7 +213,7 @@ def init_routes(app: Flask, cfg: Config) -> None:
             return jsonify({"error": "Name must be 2–20 characters."}), 400
         if not all(c.isalnum() or c in " _-." for c in name):
             return jsonify({"error": "Letters, numbers, spaces and . – _ only."}), 400
-        if _db.is_banned(name):
+        if _banned(name):
             return jsonify({"error": "That name is on the block list."}), 403
         if _db.name_is_taken(name, exclude_sid=sid):
             return jsonify({"error": "That name is already in use."}), 409
@@ -309,6 +323,11 @@ def init_routes(app: Flask, cfg: Config) -> None:
             now = time.time()
             if now - last < min_gap:
                 return jsonify({"error": "Slow down — you're sending too fast."}), 429
+            # bound memory: prune the per-sid map once it grows large
+            if len(_last_send) > 5000:
+                stale_before = now - 600
+                for k in [k for k, v in _last_send.items() if v < stale_before]:
+                    del _last_send[k]
             _last_send[sid] = now
 
         data = _is_json_object() or {}
@@ -322,6 +341,62 @@ def init_routes(app: Flask, cfg: Config) -> None:
         _db.add_message(user["name"], text, kind="chat")  # never trust client-set kind
         _broadcast_presence()
         return jsonify({"ok": True})
+
+    # ── voice messages ──────────────────────────────────────────────────
+    @app.post("/api/send-voice")
+    def api_send_voice():
+        sid = request.cookies.get(SID_COOKIE)
+        user = _active_user(sid) if sid else None
+        if not user:
+            return jsonify({"error": "Not in the room."}), 403
+        if not _require_csrf(sid):
+            return jsonify({"error": "Invalid security token. Refresh and try again."}), 403
+
+        min_gap = _app.config.get("RATE_LIMIT_SECONDS", 1.0)
+        with _rate_lock:
+            last = _last_send.get(sid, 0.0)
+            now = time.time()
+            if now - last < min_gap:
+                return jsonify({"error": "Slow down — you're sending too fast."}), 429
+            if len(_last_send) > 5000:
+                stale_before = now - 600
+                for k in [k for k, v in _last_send.items() if v < stale_before]:
+                    del _last_send[k]
+            _last_send[sid] = now
+
+        upload = request.files.get("audio")
+        if not upload:
+            return jsonify({"error": "No audio data."}), 400
+        audio = upload.read()
+        if len(audio) < 100:
+            return jsonify({"error": "Message too short — hold to record longer."}), 400
+        MAX_AUDIO_BYTES = 5 * 1024 * 1024  # 5 MB
+        if len(audio) > MAX_AUDIO_BYTES:
+            return jsonify({"error": "Audio too large (max 5 MB)."}), 400
+
+        try:
+            duration = max(0.0, min(float(request.form.get("duration", "0") or "0"), 600.0))
+        except ValueError:
+            duration = 0.0
+        label = f"[{duration:.1f}s voice message]"
+
+        _db.touch(sid)
+        _db.add_message(user["name"], label, kind="voice", audio_data=audio)
+        _broadcast_presence()
+        return jsonify({"ok": True})
+
+    @app.get("/api/voice/<int:message_id>")
+    def api_get_voice(message_id: int):
+        sid = request.cookies.get(SID_COOKIE)
+        user = _active_user(sid) if sid else None
+        if not user:
+            return jsonify({"error": "Not in the room."}), 403
+        audio = _db.get_voice_data(message_id)
+        if not audio:
+            return jsonify({"error": "Not found."}), 404
+        return Response(audio, mimetype="audio/webm", headers={
+            "Cache-Control": "private, max-age=3600",
+        })
 
     # ── moderator actions ────────────────────────────────────────────────
     @app.post("/api/approve")
@@ -354,7 +429,7 @@ def init_routes(app: Flask, cfg: Config) -> None:
             return jsonify({"error": "No such user."}), 404
         if target["is_admin"]:
             return jsonify({"error": "Moderator can't be kicked."}), 403
-        _db.ban_name(target_name)
+        _banned_names.add(target_name.lower().strip())  # in-memory only → cleared on restart
         _db.remove_user(target["sid"])
         _db.add_system_message(f"{target['name']} was removed.")
         _broadcast_presence()
@@ -375,6 +450,17 @@ def init_routes(app: Flask, cfg: Config) -> None:
         sid = request.cookies.get(SID_COOKIE)
         user = _active_user(sid) if sid else None
         return jsonify({"online": [_public_user_row(u) for u in _db.list_online_users()]})
+
+    # ── online users by name (feeds the @mention autocomplete) ────────────
+    @app.get("/api/users")
+    def api_users():
+        sid = request.cookies.get(SID_COOKIE)
+        user = _active_user(sid) if sid else None
+        if not user:
+            return jsonify({"error": "Not in the room."}), 403
+        return jsonify({
+            "users": [u["name"] for u in _db.list_online_users()]
+        })
 
     # ── server-sent events (real-time push) ──────────────────────────────
     @app.get("/api/stream")
@@ -421,10 +507,10 @@ def init_routes(app: Flask, cfg: Config) -> None:
 
                     # push presence when it changes (or ~every 30s as a heartbeat)
                     online = [_public_user_row(u) for u in _db.list_online_users()]
-                    pres = json.dumps({
-                        "online": online,
-                        "pending": len(_db.list_pending()) if _db else 0,
-                    })
+                    pres_payload = {"online": online}
+                    if current and current["is_admin"]:
+                        pres_payload["pending"] = len(_db.list_pending())
+                    pres = json.dumps(pres_payload)
                     now = time.time()
                     if pres != last_presence_json or now - last_presence_sent_at > 30:
                         last_presence_json = pres

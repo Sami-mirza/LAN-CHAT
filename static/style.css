@@ -198,6 +198,7 @@ svg { display: block; width: 18px; height: 18px; }
 /* ─── 5. Onboarding (gate) ────────────────────────────────────────────── */
 .gate {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -271,6 +272,7 @@ svg { display: block; width: 18px; height: 18px; }
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
 }
 
@@ -379,10 +381,28 @@ svg { display: block; width: 18px; height: 18px; }
   flex: none;
 }
 .stage-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.stage-room { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
-.stage-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.stage-id > div { min-width: 0; }
+.stage-room {
+  font-size: 15px; font-weight: 700; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stage-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-3); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .stage-actions { display: flex; gap: 8px; flex: none; }
 .btn-requests { position: relative; }
+
+/* notification pulse when a new join request arrives */
+.btn-requests.pulse {
+  animation: req-pulse 0.6s ease;
+}
+@keyframes req-pulse {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.12); box-shadow: 0 0 0 4px var(--accent-soft); }
+  60% { transform: scale(1.04); }
+}
 
 /* ─── 10. Message feed ────────────────────────────────────────────────── */
 .scroller {
@@ -390,6 +410,7 @@ svg { display: block; width: 18px; height: 18px; }
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
 .scroller::-webkit-scrollbar { width: 10px; }
 .scroller::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 3px solid var(--bg); }
@@ -446,6 +467,141 @@ svg { display: block; width: 18px; height: 18px; }
   background: var(--accent-soft);
   border-color: transparent;
   border-radius: 14px 14px 4px 14px;
+}
+
+/* ─── @mention highlighting ────────────────────────────────────────────
+   .msg-bubble .mention (0-2-0) beats .msg-bubble (0-1-0) so the mention
+   always wins the colour.  Plain text nodes inside .msg-bubble inherit
+   color:var(--text) as usual — nothing else is tinted.                       */
+.msg-bubble .mention {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+.msg-self .msg-bubble .mention { color: var(--accent-strong); }
+
+.msg-mentioned {
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+  background: var(--accent-faint);
+  border-radius: 4px;
+  margin-left: -12px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.msg-self.msg-mentioned { border-left-color: var(--accent-strong); }
+
+/* mention (@) button + dropdown */
+.at-btn {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-3);
+  width: 30px; height: 30px;
+}
+.at-btn:hover {
+  color: var(--accent);
+  background: var(--accent-faint);
+}
+
+.mention-dropdown {
+  position: fixed;
+  bottom: 84px;
+  width: min(280px, 80vw);
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  z-index: 70;
+  animation: card-in .15s var(--t-base);
+}
+.mention-list { padding: 4px; }
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.mention-option:hover,
+.mention-option.active { background: var(--accent-soft); }
+.mention-option .avatar-sm {
+  width: 24px; height: 24px;
+  font-size: 10px;
+}
+.mention-name { font-size: 13px; font-weight: 600; }
+
+/* ─── voice messages ─────────────────────────────────────────────────── */
+.voice-msg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+.voice-play {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: grid; place-items: center;
+  flex: none;
+  font-size: 14px;
+  transition: background var(--t-fast);
+}
+.voice-play:hover { background: var(--accent-strong); }
+.voice-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.voice-progress {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+.voice-duration {
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: 30px;
+}
+.msg-self .voice-play { background: var(--accent-strong); }
+.msg-self .voice-progress { background: var(--accent-strong); }
+
+/* ─── mic button & recording indicator ──────────────────────────────── */
+.mic-btn { flex: none; }
+.mic-btn.recording {
+  color: var(--danger);
+  animation: rec-pulse 1s ease infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rec-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: rec-pulse 1s ease infinite;
+}
+.rec-time {
+  font-size: 12px;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .sys {
@@ -689,13 +845,20 @@ svg { display: block; width: 18px; height: 18px; }
   .rail-toggle { display: inline-flex; }
   .rail-close { display: inline-flex; margin-left: auto; }
   .stage-head { padding: 12px 14px; }
-  .stage-actions .btn span { display: none; }
+  .stage-actions { gap: 6px; }
+  .stage-actions .btn span:not(.count-pill) { display: none; }
   .stage-actions .btn { width: 38px; padding: 0; }
+  .btn-requests .count-pill {
+    position: absolute; top: -5px; right: -5px;
+    min-width: 17px; height: 17px;
+    padding: 0 4px; font-size: 10px;
+  }
   .messages { padding: 14px 12px 4px; }
   .composer { padding: 10px 12px 12px; }
   .msg { grid-template-columns: 32px 1fr; column-gap: 9px; }
   .msg .avatar { width: 32px; height: 32px; font-size: 12.5px; }
   .card { padding: 28px 22px 22px; }
+  html, body { overflow-x: clip; }
 }
 
 @media (max-height: 520px) {
