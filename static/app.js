@@ -48,6 +48,27 @@ function pulseRequestsBtn() {
   setTimeout(() => els.requestsBtn.classList.remove("pulse"), 600);
 }
 
+/* ─── mention notification popup ────────────────────────────────────── */
+function showMentionNotification(message) {
+  const n = document.createElement("div");
+  n.className = "mention-notification";
+  n.innerHTML = `
+    <span>@${message.user} mentioned you!</span>
+    <span class="mention-notification-text">${message.text.substring(0, 50)}...</span>
+  `;
+  n.addEventListener("click", () => {
+    const msgNode = $(`[data-id="${message.id}"]`);
+    if (msgNode) {
+      msgNode.scrollIntoView({ behavior: "smooth", block: "start" });
+      msgNode.classList.add("flash"); // Optional: momentary highlight
+      setTimeout(() => msgNode.classList.remove("flash"), 1500);
+    }
+    n.remove();
+  });
+  els.notifications.appendChild(n);
+  setTimeout(() => n.remove(), 8000); // Auto-remove after 8 seconds
+}
+
 /* ─── theme ─────────────────────────────────────────────────────────── */
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
@@ -120,6 +141,7 @@ const els = {
   confirmCancel: $("#confirmCancel"), confirmTitle: $("#confirmTitle"),
   confirmText: $("#confirmText"),
   toasts: $("#toasts"),
+  notifications: $("#notifications"),
   loadEarlierEl: null,
 };
 
@@ -136,6 +158,24 @@ function toast(message, kind = "info") {
   els.toasts.appendChild(t);
   setTimeout(() => t.classList.add("out"), 3800);
   setTimeout(() => t.remove(), 4100);
+}
+
+/* ─── mention notification ─────────────────────────────────────────── */
+function showMentionNotification(m) {
+  const n = document.createElement("div");
+  n.className = "mention-notification";
+  n.innerHTML = `<strong>${m.user}</strong> mentioned you: <span style="font-style:italic;">${m.text.substring(0, 30)}${m.text.length > 30 ? '...' : ''}</span>`;
+  n.addEventListener("click", () => {
+    const target = els.messages.querySelector(`[data-id="${m.id}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.add("msg-highlight");
+      setTimeout(() => target.classList.remove("msg-highlight"), 2000);
+    }
+    n.remove();
+  });
+  els.notifications.appendChild(n);
+  setTimeout(() => n.remove(), 8000);
 }
 
 /* ─── fetch helper with CSRF + error surfacing ──────────────────────── */
@@ -507,7 +547,10 @@ function makeChatNode(m) {
     const pattern = new RegExp(
       "@" + escapeRegex(state.name) + "(?=\\s|[.,!?;:]|$)", "i"
     );
-    if (pattern.test(m.text)) wrap.classList.add("msg-mentioned");
+    if (pattern.test(m.text)) {
+      wrap.classList.add("msg-mentioned");
+      showMentionNotification(m);
+    }
   }
   return wrap;
 }
@@ -986,7 +1029,11 @@ async function toggleRecording() {
     els.sendBtn.disabled = true;
     recordingTimer = setInterval(updateRecTime, 200);
   } catch (err) {
-    toast("Microphone access denied or unavailable.", "err");
+    if (!window.isSecureContext) {
+      toast("Microphone needs HTTPS — restart the server with --ssl.", "err");
+    } else {
+      toast("Microphone access denied or unavailable.", "err");
+    }
   }
 }
 
@@ -1148,14 +1195,21 @@ function scrollToBottom(smooth) {
   els.scroller.scrollTo({ top: els.scroller.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 function isNearBottom() {
-  return els.scroller.scrollHeight - els.scroller.scrollTop - els.scroller.clientHeight < 90;
+  // Use a slightly larger threshold or ensure it checks the actual current scroll position
+  return els.scroller.scrollHeight - els.scroller.scrollTop - els.scroller.clientHeight < 100;
 }
 function maybeAutoScroll() {
-  if (isNearBottom()) scrollToBottom(false);
+  if (isNearBottom()) {
+    scrollToBottom(false);
+  } else {
+    // If not near bottom, we definitely want the jump button
+    els.jumpWrap.classList.remove("hidden");
+  }
   updateJumpVisibility();
 }
 function updateJumpVisibility() {
   if (!els.jumpWrap) return;
+  // Explicitly toggle based on isNearBottom
   els.jumpWrap.classList.toggle("hidden", isNearBottom());
 }
 function removeEmptyState() {

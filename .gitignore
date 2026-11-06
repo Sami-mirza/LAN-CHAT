@@ -10,6 +10,9 @@ data/
 *.db-wal
 *.db-shm
 
+# Self-signed TLS certificates (regenerated on demand by --ssl)
+certs/
+
 # Editor / OS
 .idea/
 .vscode/

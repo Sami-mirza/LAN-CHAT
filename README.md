@@ -19,6 +19,7 @@ time over **Server-Sent Events**.
 | ✅ **Moderator controls** — approve / decline joins, remove members, clear the room, block names |
 | ✅ **Persistent history** — messages survive server restarts (SQLite) |
 | ✅ **Online members list** — live presence with idle timeout |
+| ✅ **Voice messages** — one-tap record & send from the mic (requires HTTPS) |
 | ✅ **Date-separated history** — paginated "load earlier", grouped by day |
 | ✅ **Professional UI** — light & dark themes, responsive, accessible focus states |
 | ✅ **Fully offline friendly** — vendored dependencies (`deps/`) mean zero downloads on the day |
@@ -37,6 +38,20 @@ python main.py
 # 3. open the printed URL on any device on the same LAN.
 ```
 
+To send **voice messages** the page must be reachable over HTTPS (browsers
+only grant microphone access in a *secure context*). Serve with a self-signed
+certificate:
+
+```bash
+python main.py --ssl          # auto-generates a self-signed cert into certs/
+```
+
+On the first visit each browser flags the certificate as untrusted — click
+**Advanced → Proceed**. After that the page is secure and the mic is allowed.
+(For zero browser warnings, install a local CA with
+[`mkcert`](https://github.com/FiloSottile/mkcert) and pass the cert with
+`--cert cert.pem --key cert-key.pem`.)
+
 To configure:
 
 ```bash
@@ -50,6 +65,8 @@ python main.py --port 5000 --room "Engineering" --admin-password "s3cr3t"
 | `--room` | `LAN Chat` | Room name shown in the UI |
 | `--db` | `data/lan-chat.db` | SQLite database location |
 | `--admin-password` | env `LAN_CHAT_ADMIN_PASSWORD`, else `admin` | Moderator password |
+| `--ssl` | off | Serve over HTTPS (self-signed cert, required for the mic) |
+| `--cert`, `--key` | auto-generated into `certs/` | PEM certificate/key to use with `--ssl` |
 
 The moderator password is **never stored** on disk — only its salted hash is
 kept in memory. Anyone who signs in with it gains moderator controls in the
@@ -82,6 +99,7 @@ python main.py
 | Forged system messages | `kind` is set server-side only; client input can never be a system message |
 | Flooding | Per-session send rate limit (`--rate` interval) |
 | Admin password | Only an in-memory salted hash compared in constant time |
+| Microphone privacy | Voice is only sent over the HTTPS link; the self-signed cert never leaves your LAN |
 
 > **Deployment caveat:** the built-in Flask dev server is fine for LAN-scale
 > use. For heavy public deployments, front LAN Chat with a production WSGI

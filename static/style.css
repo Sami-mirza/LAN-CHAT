@@ -781,7 +781,29 @@ svg { display: block; width: 18px; height: 18px; }
 .dialog-actions { display: flex; gap: 10px; margin-top: 22px; }
 .dialog-actions .btn { flex: 1; }
 
-/* ─── 14. Toasts ──────────────────────────────────────────────────────── */
+/* ─── 14. Mention Notifications ───────────────────────────────────────── */
+.notifications {
+  position: fixed; top: 18px; right: 18px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 100;
+}
+.mention-notification {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 240px; max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  padding: 11px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  animation: toast-in .24s var(--t-base);
+}
+.mention-notification:hover { background: var(--surface-2); }
+
+/* ─── 15. Toasts ──────────────────────────────────────────────────────── */
 .toasts {
   position: fixed; right: 18px; bottom: 18px;
   display: flex; flex-direction: column; gap: 8px;

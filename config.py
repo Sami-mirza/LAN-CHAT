@@ -29,6 +29,13 @@ class Config:
     admin_password: str = DEFAULT_ADMIN_PASSWORD
     # minimum seconds between one session's sends (anti-spam)
     rate_limit_seconds: float = 1.0
+    # HTTPS: served over a (self-signed) TLS certificate so browsers grant
+    # the microphone permission on LAN origins. cert_path/key_path are the
+    # PEM files to use; when use_ssl is set without them, main.py generates
+    # a self-signed pair with openssl into certs/.
+    use_ssl: bool = False
+    cert_path: Optional[str] = None
+    key_path: Optional[str] = None
 
     # Runtime bindings (resolved after construction, not constructor args)
     db: Optional[object] = field(default=None, init=False, repr=False)
